@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio-Reactive DMX Lights</title>
+<meta name="description" content="One audio track, analysed offline and played back as DMX by an ESP32 through an RS-485 module. One colour per beat, never mixing into white.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --stage: #15122e;
+    --stage-2: #1e1a42;
+    --rule: #342e6b;
+    --text: #f3efe6;
+    --muted: #b4aed6;
+    --red: #ff4458;
+    --green: #35e59c;
+    --blue: #4a86ff;
+    --warm: #fff1d6;
+    --glow: var(--warm);
+    --display: "Bricolage Grotesque", "Trebuchet MS", sans-serif;
+    --body: "IBM Plex Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --stage: #f4f1fb;
+      --stage-2: #e8e3f6;
+      --rule: #c9c1e6;
+      --text: #1b1738;
+      --muted: #55507a;
+      --warm: #ffd98a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--stage);
+    color: var(--text);
+    font-family: var(--body);
+    line-height: 1.6;
+  }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+  header.top { padding: 20px 0; }
+  header.top .wrap { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .brand { font-family: var(--display); font-weight: 800; font-size: 1.05rem; text-decoration: none; }
+  nav a { margin-left: 20px; text-decoration: none; color: var(--muted); font-size: .95rem; }
+  nav a:hover { color: var(--text); }
+
+  /* Hero */
+  .hero { padding: 40px 0 72px; }
+  .hero .wrap { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+  h1 {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(2.4rem, 6vw, 4.3rem);
+    line-height: 1.02;
+    letter-spacing: -.02em;
+    margin: 0 0 20px;
+  }
+  .lede { font-size: 1.15rem; color: var(--muted); max-width: 34em; margin: 0 0 28px; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 12px 20px; border-radius: 6px;
+    font-weight: 500; text-decoration: none;
+    border: 2px solid var(--text);
+  }
+  .btn.primary { background: var(--text); color: var(--stage); }
+  .btn.primary:hover { background: var(--glow); border-color: var(--glow); color: #15122e; }
+  .btn:hover { border-color: var(--glow); }
+
+  /* Live fixture */
+  .rig { display: grid; gap: 20px; justify-items: center; }
+  .lamp {
+    width: min(78vw, 320px); aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle at 50% 45%, #fff 0, var(--glow) 28%, color-mix(in srgb, var(--glow) 55%, transparent) 62%, transparent 72%);
+    opacity: var(--level, .6);
+    box-shadow: 0 0 120px 30px color-mix(in srgb, var(--glow) 35%, transparent);
+    transition: opacity .08s linear;
+  }
+  .readout {
+    width: 100%; max-width: 320px; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--stage-2); padding: 14px 16px;
+    font-family: var(--mono); font-size: .85rem;
+  }
+  .row { display: grid; grid-template-columns: 78px 1fr 34px; gap: 10px; align-items: center; padding: 3px 0; }
+  .bar { height: 8px; background: var(--rule); border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: var(--v, 0%); transition: width .08s linear; }
+  .r i { background: var(--red); } .g i { background: var(--green); } .b i { background: var(--blue); } .d i { background: var(--warm); }
+  .caption { font-size: .85rem; color: var(--muted); text-align: center; max-width: 320px; margin: 0; }
+
+  /* Sections */
+  section { padding: 64px 0; border-top: 1px solid var(--rule); }
+  h2 { font-family: var(--display); font-weight: 800; font-size: clamp(1.7rem, 4vw, 2.4rem); line-height: 1.1; margin: 0 0 16px; letter-spacing: -.01em; }
+  .intro { color: var(--muted); max-width: 40em; margin: 0 0 32px; }
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 28px; counter-reset: step; list-style: none; padding: 0; margin: 0; }
+  .flow li { counter-increment: step; border-left: 3px solid var(--rule); padding-left: 16px; }
+  .flow li::before { content: "Step " counter(step); font-family: var(--mono); font-size: .8rem; color: var(--muted); display: block; }
+  .flow h3 { font-family: var(--display); margin: 4px 0 6px; font-size: 1.15rem; }
+  .flow p { margin: 0; color: var(--muted); font-size: .95rem; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-family: var(--display); font-weight: 500; color: var(--muted); }
+  .scroll { overflow-x: auto; }
+  pre {
+    background: var(--stage-2); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 16px; overflow-x: auto; font-family: var(--mono); font-size: .82rem; line-height: 1.5; margin: 0;
+  }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; vertical-align: -1px; }
+
+  footer { padding: 40px 0 56px; border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem; }
+
+  @media (max-width: 820px) {
+    .hero .wrap, .two { grid-template-columns: 1fr; }
+    nav a { margin: 0 16px 0 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .lamp, .bar i { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#top">Audio-Reactive DMX Lights</a>
+    <nav aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#colour">Colour rule</a>
+      <a href="#hardware">Hardware</a>
+      <a href="#wiring">Wiring</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <div>
+        <h1>One song. Every beat gets its own colour.</h1>
+        <p class="lede">An ESP32 plays a pre-analysed audio track back as DMX, through a TTL-to-RS-485 module. Brightness follows the flow of the music, colours follow the instruments, and red, green and blue never blend into white.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/">Read the README</a>
+          <a class="btn" href="#how">See how it works</a>
+        </div>
+      </div>
+
+      <div class="rig" aria-label="Live demo of the colour rule">
+        <div class="lamp" id="lamp" role="img" aria-label="Animated light that shows one colour per beat"></div>
+        <div class="readout" aria-hidden="true">
+          <div class="row r"><span>CH1 red</span><span class="bar"><i id="vr"></i></span><span id="nr">0</span></div>
+          <div class="row g"><span>CH2 green</span><span class="bar"><i id="vg"></i></span><span id="ng">0</span></div>
+          <div class="row b"><span>CH3 blue</span><span class="bar"><i id="vb"></i></span><span id="nb">0</span></div>
+          <div class="row d"><span>CH7 dim</span><span class="bar"><i id="vd"></i></span><span id="nd">0</span></div>
+        </div>
+        <p class="caption">Demo only. Each beat sends one colour at full level while the other two stay low.</p>
+      </div>
+    </div>
+  </div>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>From audio file to light show</h2>
+      <p class="intro">There is only one track, so the show is worked out ahead of time and tuned until it looks right. Nothing is analysed live.</p>
+      <ol class="flow">
+        <li><h3>Analyse offline</h3><p>Split the track into bands, find the beats and measure the energy of the song.</p></li>
+        <li><h3>Choose the colour</h3><p>For each beat, the strongest band picks one colour. The rest stay low.</p></li>
+        <li><h3>Build DMX frames</h3><p>Colour goes to channels 1 to 3, brightness to the master dimmer on channel 7.</p></li>
+        <li><h3>Play back</h3><p>The ESP32 streams the frames at 250 kbaud, in step with the audio.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="colour">
+    <div class="wrap two">
+      <div>
+        <h2>The colour rule</h2>
+        <p class="intro">Early versions mixed every band into red, green and blue at once. The lights looked white all the time. The fix is simple.</p>
+        <p style="margin:0 0 12px"><span class="swatch" style="background:var(--red)"></span>One colour takes priority on each beat.</p>
+        <p style="margin:0 0 12px"><span class="swatch" style="background:var(--green)"></span>Different instruments map to different colours.</p>
+        <p style="margin:0 0 12px"><span class="swatch" style="background:var(--blue)"></span>A baseline level keeps the lights on between beats.</p>
+        <p style="margin:0"><span class="swatch" style="background:var(--warm)"></span>White appears only when it is asked for.</p>
+      </div>
+      <div class="scroll">
+        <h2>Fixture channels</h2>
+        <table>
+          <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>DMX address</td><td>d001</td></tr>
+            <tr><td>Channel 1</td><td>Red</td></tr>
+            <tr><td>Channel 2</td><td>Green</td></tr>
+            <tr><td>Channel 3</td><td>Blue</td></tr>
+            <tr><td>Channel 7</td><td>Master dimmer</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="hardware">
+    <div class="wrap">
+      <h2>What you need</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Part</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>ESP-WROOM-32</td><td>Generates the DMX signal from a UART and plays the frame table</td></tr>
+            <tr><td>TTL-to-RS-485 module</td><td>Turns the ESP32 signal into the differential signal DMX needs</td></tr>
+            <tr><td>LED light, 3-pin DMX input</td><td>The fixture, set to address d001</td></tr>
+            <tr><td>Next Vmix 2000</td><td>12/24-channel DMX desk, used as a reference for fixture behaviour</td></tr>
+            <tr><td>3-pin DMX cable</td><td>Connects the module to the light</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="wiring">
+    <div class="wrap two">
+      <div>
+        <h2>Wiring</h2>
+        <p class="intro">Only TX is used. DMX here is send-only. If the light does not respond, swap A and B on the module.</p>
+        <pre>ESP32 TX   -> module DI
+ESP32 GND  -> module GND -> DMX pin 1
+module DE+RE tied high (transmit)
+module B   -> DMX pin 3 (Data +)
+module A   -> DMX pin 2 (Data -)</pre>
+      </div>
+      <div>
+        <h2>DMX signal</h2>
+        <p class="intro">Standard DMX512 timing is used for every frame.</p>
+        <pre>Baud rate   250,000
+Format      8 data bits, no parity, 2 stop bits
+Frame       break, mark-after-break, start code 0,
+            then channel values 0 to 255</pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    Created by Saurabh. Full details, setup steps and troubleshooting are in the README.
+  </div>
+</footer>
+
+<script>
+(function () {
+  var lamp = document.getElementById('lamp');
+  var ids = ['r', 'g', 'b', 'd'];
+  var bars = {}, nums = {};
+  ids.forEach(function (k) { bars[k] = document.getElementById('v' + k); nums[k] = document.getElementById('n' + k); });
+  var colours = [
+    { n: 'r', c: '#ff4458' }, { n: 'g', c: '#35e59c' }, { n: 'b', c: '#4a86ff' },
+    { n: 'r', c: '#ff4458' }, { n: 'b', c: '#4a86ff' }, { n: 'g', c: '#35e59c' }
+  ];
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var beatMs = 520, base = 0.35;
+
+  function show(vals, level, glow) {
+    ids.slice(0, 3).forEach(function (k) {
+      var v = Math.round(vals[k] * 255);
+      bars[k].style.setProperty('--v', (v / 255 * 100) + '%');
+      nums[k].textContent = v;
+    });
+    var d = Math.round(level * 255);
+    bars.d.style.setProperty('--v', (level * 100) + '%');
+    nums.d.textContent = d;
+    lamp.style.setProperty('--level', level);
+    lamp.style.setProperty('--glow', glow);
+  }
+
+  if (reduce) {
+    show({ r: 1, g: 0.15, b: 0.15 }, 0.8, '#ff4458');
+    return;
+  }
+
+  var start = performance.now();
+  function frame(now) {
+    var t = now - start;
+    var beat = Math.floor(t / beatMs);
+    var phase = (t % beatMs) / beatMs;
+    var pick = colours[beat % colours.length];
+    var env = base + (1 - base) * Math.exp(-phase * 4.2);
+    var vals = { r: 0.15, g: 0.15, b: 0.15 };
+    vals[pick.n] = 1;
+    show(vals, env, pick.c);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
