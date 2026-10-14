@@ -235,6 +235,6 @@ If you can, confirm the same behaviour on the Next Vmix 2000 desk first. It is u
 
 ## 16. Author and licence
 
-Created by **Saurabh**.
+Created by **Saurabh Biswas**.
 
-Licence: add a `LICENSE` file (MIT is a common choice for projects like this).
+Licensed under the MIT License. See the `LICENSE` file.
