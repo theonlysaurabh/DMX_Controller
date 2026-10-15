@@ -16,9 +16,12 @@ How it works
 
 Each frame has 4 values (0-254): Red, Green, Blue, Master dimmer.
 
-Usage:  python analyze.py yourfile.mp3 [--plot]
-Output: curve.npy  (shape: frames x 4)
+Usage:
+  python analyze.py yourfile.mp3 [--plot]   # creates curves/<yourfile>.npy
+  python analyze.py --all                   # analyzes all audio files in folder
+Output: curves/<song>.npy (shape: frames x 4)
 """
+import os
 import sys
 import numpy as np
 import librosa
@@ -27,6 +30,8 @@ from sklearn.cluster import KMeans
 FPS = 40
 SR = 24000               # 24000 / 40 = 600 -> exact hop, no timing drift
 HOP = SR // FPS
+HEADER = 255
+CURVES_DIR_NAME = "curves"
 
 # ---- colours, from the deepest-sounding hit group to the brightest -------
 COLORS = [
@@ -75,10 +80,45 @@ def attack_release(x, attack, release):
     return out
 
 
-def main():
-    path = sys.argv[1]
+def get_curve_path(audio_path, create_dir=True):
+    """Returns the dedicated curve path curves/<song_stem>.npy for an audio file."""
+    folder = os.path.dirname(os.path.abspath(audio_path)) or os.getcwd()
+    stem = os.path.splitext(os.path.basename(audio_path))[0]
+    curves_dir = os.path.join(folder, CURVES_DIR_NAME)
+    if create_dir:
+        os.makedirs(curves_dir, exist_ok=True)
+    return os.path.join(curves_dir, f"{stem}.npy")
+
+
+def find_curve_for_song(audio_path):
+    """Finds existing curve file for a given song, checking multiple locations."""
+    if not audio_path:
+        return None
+    folder = os.path.dirname(os.path.abspath(audio_path)) or os.getcwd()
+    stem = os.path.splitext(os.path.basename(audio_path))[0]
+    base = os.path.basename(audio_path)
+    
+    candidates = [
+        os.path.join(folder, CURVES_DIR_NAME, f"{stem}.npy"),
+        os.path.join(folder, CURVES_DIR_NAME, f"{base}.npy"),
+        os.path.join(folder, f"{stem}.curve.npy"),
+        os.path.join(folder, f"{stem}_curve.npy"),
+        os.path.join(folder, f"{stem}.npy"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def analyze_song(path, output_path=None, show_plot=False, status_cb=None):
+    """Analyze a song and save its individual curve.npy file."""
+    if status_cb:
+        status_cb(f"Loading {os.path.basename(path)}...")
     y, _ = librosa.load(path, sr=SR, mono=True)
 
+    if status_cb:
+        status_cb("Computing audio spectrum & onsets...")
     S = np.abs(librosa.stft(y, n_fft=2048, hop_length=HOP))
     freqs = librosa.fft_frequencies(sr=SR, n_fft=2048)
     rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=HOP)[0]
@@ -87,10 +127,11 @@ def main():
     S, rms, onset_env = S[:, :n], rms[:n], onset_env[:n]
 
     # ---- 1. find hits ----
+    if status_cb:
+        status_cb("Detecting beat hits...")
     cand = librosa.onset.onset_detect(onset_envelope=onset_env, sr=SR, hop_length=HOP,
                                       delta=HIT_SENSITIVITY, wait=2, units="frames")
     cand = cand[cand < n - 1]
-    strength_all = norm(onset_env)
 
     # ---- 2. keep the strongest hits, no two closer than MIN_DWELL ----
     dwell = int(round(MIN_DWELL * FPS))
@@ -99,8 +140,12 @@ def main():
         if all(abs(f - k) >= dwell for k in kept):
             kept.append(f)
     hits = np.array(sorted(kept))
+    if len(hits) == 0:
+        hits = np.array([0])
 
     # ---- 3. describe each hit by what it sounds like, then group them ----
+    if status_cb:
+        status_cb("Clustering hit timbres...")
     feats, cents = [], []
     for f in hits:
         post = S[:, f + 1:min(f + 4, n)].mean(axis=1)
@@ -127,6 +172,8 @@ def main():
     white_thr = np.percentile(hit_strength[loud], WHITE_PERCENTILE) if loud.any() else 2.0
 
     # ---- 4/5. build the colour timeline: one pure colour per frame ----
+    if status_cb:
+        status_cb("Generating color timeline & master dimmer...")
     names = [c[0] for c in COLORS] + ["white"]
     pal = np.array([c[1] for c in COLORS] + [WHITE], dtype=float)
     pick = np.zeros(n, int)
@@ -156,22 +203,27 @@ def main():
 
     curve = np.concatenate([rgb, (m * 254)[:, None]], axis=1)
     curve = np.clip(np.round(curve), 0, 254).astype(np.uint8)   # 255 is the header byte
-    np.save("curve.npy", curve)
 
-    # ---- report ----
+    # Save to individual curve file
+    out_file = output_path or get_curve_path(path)
+    np.save(out_file, curve)
+
+    # Also save to curve.npy for backward compatibility with single-file scripts
+    try:
+        legacy_path = os.path.join(os.path.dirname(os.path.abspath(path)) or ".", "curve.npy")
+        np.save(legacy_path, curve)
+    except Exception:
+        pass
+
     changes = int((np.diff(pick) != 0).sum())
-    print(f"{n} frames, {n / FPS:.1f} s, {len(hits)} hits used, "
-          f"{changes} colour changes ({changes / (n / FPS):.1f} per second)")
-    print("Hit groups (deepest -> brightest) and the share of the song in each colour:")
-    for r in range(k):
-        sel = group == r
-        print(f"  {names[r]:8s} {sel.sum():3d} hits, avg pitch of hit {cents[sel].mean():6.0f} Hz, "
-              f"on screen {np.mean(pick == r) * 100:5.1f} %")
-    print(f"  {'white':8s} {int(np.sum(pick[hits] == N_GROUPS)):3d} hits, "
-          f"on screen {np.mean(pick == N_GROUPS) * 100:5.1f} %")
-    print(f"Master dimmer: min {curve[:, 3].min()}, mean {curve[:, 3].mean():.0f}")
+    report = (f"Saved {out_file} ({n} frames, {n / FPS:.1f} s, {len(hits)} hits, "
+              f"{changes} color changes)")
+    print(report)
 
-    if "--plot" in sys.argv:
+    if status_cb:
+        status_cb(f"Ready: {os.path.basename(out_file)}")
+
+    if show_plot:
         import matplotlib.pyplot as plt
         tt = np.arange(n) / FPS
         fig, (a1, a2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True,
@@ -188,6 +240,36 @@ def main():
         a2.set_xlabel("seconds   (bottom bar = the colour the light will show)")
         plt.tight_layout()
         plt.show()
+
+    return curve, out_file
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python analyze.py yourfile.mp3 [--plot]")
+        print("  python analyze.py --all")
+        sys.exit(1)
+
+    if sys.argv[1] == "--all":
+        folder = "."
+        audio_exts = (".mp3", ".wav", ".ogg", ".flac", ".m4a")
+        files = [f for f in sorted(os.listdir(folder)) if f.lower().endswith(audio_exts)]
+        print(f"Found {len(files)} audio files in {os.path.abspath(folder)}:")
+        for f in files:
+            full_p = os.path.join(folder, f)
+            existing = find_curve_for_song(full_p)
+            if existing and "--force" not in sys.argv:
+                print(f"  [SKIPPED] {f} (curve exists: {existing})")
+                continue
+            print(f"\n--- Analyzing {f} ---")
+            analyze_song(full_p)
+        print("\nAll files processed.")
+        return
+
+    path = sys.argv[1]
+    show_plot = "--plot" in sys.argv
+    analyze_song(path, show_plot=show_plot)
 
 
 if __name__ == "__main__":

@@ -3,14 +3,16 @@ stream.py - play the audio and stream the R,G,B,Master curve to the ESP32.
 
 Usage:
   python stream.py test COM3            # wiring/colour test (white, red, green, blue sweeps)
-  python stream.py yourfile.mp3 COM3    # play song + lights (needs curve.npy from analyze.py)
+  python stream.py yourfile.mp3 COM3    # play song + lights once (auto-detects curve)
 """
+import os
 import sys
 import time
 import numpy as np
 import serial
 import librosa
 import sounddevice as sd
+from analyze import find_curve_for_song, analyze_song
 
 FPS = 40
 LIGHT_DELAY = 0.0   # seconds. Positive = lights later (use if your speaker lags,
@@ -23,6 +25,10 @@ def send(ser, r, g, b, m):
 
 
 def main():
+    if len(sys.argv) < 3:
+        print("Usage: python stream.py <audiofile.mp3 | test> <COM_PORT>")
+        sys.exit(1)
+
     target, port = sys.argv[1], sys.argv[2]
     ser = serial.Serial(port, 115200)
     time.sleep(2)                    # ESP32 resets when the port opens
@@ -35,7 +41,13 @@ def main():
                     time.sleep(0.01)
             return
 
-        curve = np.load("curve.npy")
+        curve_path = find_curve_for_song(target)
+        if not curve_path or not os.path.isfile(curve_path):
+            print(f"Curve not found for {target}. Analyzing now...")
+            _, curve_path = analyze_song(target)
+
+        print(f"Using curve: {curve_path}")
+        curve = np.load(curve_path)
         data, sr = librosa.load(target, sr=None, mono=False)
         if data.ndim == 2:
             data = data.T            # sounddevice wants (samples, channels)
