@@ -1,6 +1,6 @@
-   __pycache__/
-   *.pyc
-   *.mp3
-   *.wav
-   curve.npy
-   curves/*.npy
+__pycache__/
+*.pyc
+*.mp3
+*.wav
+curve.npy
+curves/*.npy
