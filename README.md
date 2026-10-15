@@ -4,6 +4,17 @@ Turn one audio track into a full DMX lighting show. The track is analysed **offl
 
 Beats and the flow of the music drive brightness. Different instruments drive different colours. On every beat exactly one colour takes priority, so red, green and blue never blend into white.
 
+   ![DMX Music Light Controller GUI](docs/images/gui.png)
+
+   ## Songs
+
+   Songs are not included in this repository because they are copyrighted.
+   To use the controller, copy your own .mp3 files into the DMX folder.
+   They appear in the song dropdown automatically. Click Analyze (or
+   Analyze All Missing) once per song, and the result is saved in the
+   curves/ folder so it does not need to be repeated.
+
+
 ---
 
 ## Table of contents
